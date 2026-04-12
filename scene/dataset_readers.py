@@ -36,6 +36,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     is_test: bool
+    time: float = 0.0  # <--- 新增：存储归一化时间 [0, 1]
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -236,6 +237,9 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
         for idx, frame in enumerate(frames):
             cam_name = os.path.join(path, frame["file_path"] + extension)
 
+            # 关键修改：从 json 中获取 time，如果没有则默认为 0.0
+            timestamp = float(frame.get("time", 0.0))
+
             # NeRF 'transform_matrix' is a camera-to-world transform
             c2w = np.array(frame["transform_matrix"])
             # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
@@ -256,7 +260,7 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
 
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            image = Image.fromarray(np.array(arr*255.0, dtype=np.uint8), "RGB")
 
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
             FovY = fovy 
@@ -266,7 +270,8 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX,
                             image_path=image_path, image_name=image_name,
-                            width=image.size[0], height=image.size[1], depth_path=depth_path, depth_params=None, is_test=is_test))
+                            width=image.size[0], height=image.size[1], depth_path=depth_path, depth_params=None, is_test=is_test,
+                            time=timestamp))# <--- 传入时间
             
     return cam_infos
 
@@ -287,11 +292,11 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"
     ply_path = os.path.join(path, "points3d.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
-        num_pts = 100_000
+        num_pts = 1_000_000
         print(f"Generating random point cloud ({num_pts})...")
         
         # We create random points inside the bounds of the synthetic Blender scenes
-        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+        xyz = np.random.random((num_pts, 3)) * 1.5 - 0.75
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
