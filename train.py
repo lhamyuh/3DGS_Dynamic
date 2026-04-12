@@ -22,6 +22,10 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+# 这里的第一个 deform_model 是文件名，第二个 DeformModel 是类名
+from model.deform_model import DeformModel
+
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -49,6 +53,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
     scene = Scene(dataset, gaussians)
+
+    # 实例化变形网络 (针对 5090 性能，W=256 是平衡点)
+    deform_model = DeformModel(D=8, W=256).cuda()
+
+    # 创建独立的优化器。注意：lr 通常比静态高斯的小一个数量级 (1e-4)
+    deform_optimizer = torch.optim.Adam(deform_model.parameters(), lr=1e-4)
+
+    # 设定学习率衰减（可选，保证后期收敛更精细）
+    deform_scheduler = torch.optim.lr_scheduler.ExponentialLR(deform_optimizer, gamma=0.9999)
+    # --- 4D 变形场初始化结束 ---
+
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -108,8 +123,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
+        #image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+        # 获取当前相机的时间戳（确保你在 Camera 类里定义的是这个名字）
+        cur_time = viewpoint_cam.timestamp
+
+        # 计算变形后的位置：Means_final = Means_static + ΔMeans
+        # gaussians.get_xyz 是规范空间中的静态点
+        d_xyz = deform_model(gaussians.get_xyz, cur_time)
+        means3D_deformed = gaussians.get_xyz + d_xyz
+
+        # 调用渲染器，通过 override_means3D 注入动态位置
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
+                            override_means3D=means3D_deformed,
+                            use_trained_exp=dataset.train_test_exp,
+                            separate_sh=SPARSE_ADAM_AVAILABLE)
+        image = render_pkg["render"]
+        viewspace_point_tensor = render_pkg["viewspace_points"]
+        visibility_filter = render_pkg["visibility_filter"]
+        radii = render_pkg["radii"]
 
         if viewpoint_cam.alpha_mask is not None:
             alpha_mask = viewpoint_cam.alpha_mask.cuda()
@@ -139,7 +172,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             Ll1depth = 0
 
+        # --- [3] 【新增核心】时空一致性约束 (TV Loss) ---
+        # 解决问题 6：平滑动作趋势，消除射线与抖动
+        # 建议在 3000 步之后开启，让模型先学好静态几何，再学平滑形变
+        #if iteration > 3000:
+            #    epsilon = 0.01
+            #   t_neighbor = (cur_time + epsilon) if cur_time < 0.95 else (cur_time - epsilon)
+            #   d_xyz_neighbor = deform_model(gaussians.get_xyz, t_neighbor)
+            #   # 权重建议调至 0.005 级别，对抗相机的大幅跳跃
+            #   loss_tv = torch.nn.functional.mse_loss(d_xyz_neighbor, d_xyz)
+        #    loss += 0.005 * loss_tv
+
         loss.backward()
+
+        # 更新变形场参数
+        deform_optimizer.step()
+        deform_optimizer.zero_grad()
+        deform_scheduler.step()  # 随迭代衰减学习率
+
+        # 后续原有的 gaussians.optimizer.step() 等代码保持不变
 
         iter_end.record()
 
@@ -158,6 +209,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
+                #保存4D点云
+                print("\n[ITER {}] Saving 4D Deformation Model".format(iteration))
+                torch.save(deform_model.state_dict(), os.path.join(scene.model_path, f"deform_iter_{iteration}.pth"))
+
                 scene.save(iteration)
 
             # Densification
@@ -168,7 +223,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, radii)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.01, scene.cameras_extent, size_threshold, radii)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()

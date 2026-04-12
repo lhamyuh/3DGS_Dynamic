@@ -78,11 +78,12 @@ class OptimizationParams(ParamGroup):
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
+        self.deformation_lr_init = 0.001 # --- [新增：形变场初始学习率参数] ---
         self.feature_lr = 0.0025
         self.opacity_lr = 0.025
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
-        self.exposure_lr_init = 0.01
+        self.exposure_lr_init = 0.005
         self.exposure_lr_final = 0.001
         self.exposure_lr_delay_steps = 0
         self.exposure_lr_delay_mult = 0.0
@@ -91,8 +92,8 @@ class OptimizationParams(ParamGroup):
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
-        self.densify_until_iter = 15_000
-        self.densify_grad_threshold = 0.0002
+        self.densify_until_iter = 20_000
+        self.densify_grad_threshold = 0.00003
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
         self.random_background = False
