@@ -101,6 +101,7 @@ class OptimizationParams(ParamGroup):
         self.temporal_smoothness_weight = 0.0
         self.temporal_smoothness_start_iter = 3000
         self.temporal_smoothness_epsilon = 0.01
+        self.bg_consistency_weight = 0.0
         self.random_background = False
         self.optimizer_type = "default"
         super().__init__(parser, "Optimization Parameters")
