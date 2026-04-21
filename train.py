@@ -57,12 +57,44 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     # 实例化变形网络 (针对 5090 性能，W=256 是平衡点)
     deform_model = DeformModel(D=8, W=256).cuda()
 
-    # 创建独立的优化器。注意：lr 通常比静态高斯的小一个数量级 (1e-4)
-    deform_optimizer = torch.optim.Adam(deform_model.parameters(), lr=1e-4)
+    # 创建独立的优化器，支持命令行控制变形网络学习率。
+    deform_optimizer = torch.optim.Adam(deform_model.parameters(), lr=opt.deformation_lr_init)
 
     # 设定学习率衰减（可选，保证后期收敛更精细）
-    deform_scheduler = torch.optim.lr_scheduler.ExponentialLR(deform_optimizer, gamma=0.9999)
+    deform_scheduler = torch.optim.lr_scheduler.ExponentialLR(deform_optimizer, gamma=opt.deformation_lr_gamma)
     # --- 4D 变形场初始化结束 ---
+
+    train_cameras = scene.getTrainCameras()
+    time_min = 0.0
+    time_max = 1.0
+    if len(train_cameras) == 0:
+        print("[Warning] No training cameras were loaded.")
+    else:
+        train_timestamps = [float(cam.timestamp) for cam in train_cameras]
+        ts_min = min(train_timestamps)
+        ts_max = max(train_timestamps)
+        time_min = ts_min
+        time_max = ts_max
+        unique_ts = len({round(t, 7) for t in train_timestamps})
+        print(f"[Dynamic] Timestamp range in train set: [{ts_min:.6f}, {ts_max:.6f}], unique={unique_ts}/{len(train_timestamps)}")
+        if unique_ts <= 1:
+            print("[Warning] All timestamps are identical. Dynamic deformation will collapse to near-static behavior.")
+
+        if dataset.white_background:
+            border_vals = []
+            sample_count = min(20, len(train_cameras))
+            for cam in train_cameras[:sample_count]:
+                img = cam.original_image
+                border = torch.cat([
+                    img[:, 0, :],
+                    img[:, -1, :],
+                    img[:, :, 0],
+                    img[:, :, -1]
+                ], dim=1)
+                border_vals.append(border.mean().item())
+            mean_border = sum(border_vals) / max(1, len(border_vals))
+            if mean_border < 0.15:
+                print("[Warning] Input borders appear dark but --white_background is enabled. Consider disabling white background to reduce color noise.")
 
     gaussians.training_setup(opt)
     if checkpoint:
@@ -172,16 +204,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             Ll1depth = 0
 
-        # --- [3] 【新增核心】时空一致性约束 (TV Loss) ---
-        # 解决问题 6：平滑动作趋势，消除射线与抖动
-        # 建议在 3000 步之后开启，让模型先学好静态几何，再学平滑形变
-        #if iteration > 3000:
-            #    epsilon = 0.01
-            #   t_neighbor = (cur_time + epsilon) if cur_time < 0.95 else (cur_time - epsilon)
-            #   d_xyz_neighbor = deform_model(gaussians.get_xyz, t_neighbor)
-            #   # 权重建议调至 0.005 级别，对抗相机的大幅跳跃
-            #   loss_tv = torch.nn.functional.mse_loss(d_xyz_neighbor, d_xyz)
-        #    loss += 0.005 * loss_tv
+        # 时空平滑正则：抑制彩色噪点与时间抖动，默认关闭，可按需开启。
+        if opt.temporal_smoothness_weight > 0.0 and iteration >= opt.temporal_smoothness_start_iter:
+            eps = abs(opt.temporal_smoothness_epsilon)
+            if eps > 0 and time_max > time_min:
+                cur_time_f = float(cur_time)
+                t_neighbor = min(time_max, cur_time_f + eps)
+                if t_neighbor == cur_time_f:
+                    t_neighbor = max(time_min, cur_time_f - eps)
+                d_xyz_neighbor = deform_model(gaussians.get_xyz, t_neighbor)
+                loss_tv = torch.nn.functional.smooth_l1_loss(d_xyz_neighbor, d_xyz)
+                loss += opt.temporal_smoothness_weight * loss_tv
 
         loss.backward()
 
@@ -223,7 +256,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.01, scene.cameras_extent, size_threshold, radii)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.prune_opacity_threshold, scene.cameras_extent, size_threshold, radii)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
