@@ -68,3 +68,47 @@ Next Action Plan:
 Keep conservative densification, further lower deformation drift, and increase temporal continuity constraints.
 
 Add explicit dynamic-viewer path (or runtime deformation application) to bridge static SIBR display and 4D outputs.
+
+
+Experiment V9.1 Log
+Status: Good (current best)
+
+Profile summary:
+
+Based on V9 conservative training, integrated timestamp fix, temporal regularization knobs, and render-side anti-ghosting controls.
+
+Key render settings (free camera):
+
+--num_output_frames 420
+
+--post_smooth_mode ema
+
+--ema_alpha 0.9
+
+--deform_time_samples 3
+
+--deform_time_window 0.004
+
+Observed improvements:
+
+Fixed-camera sequence reaches target behavior: clear transition from squat toward standing with smooth temporal continuity.
+
+Free-camera sequence also improved versus V9, with less tearing and better perceptual continuity.
+
+Overall subjective quality is acceptable for current milestone.
+
+Remaining limitations:
+
+Minor residual ghosting still appears in some free-camera segments.
+
+Occasional frame pacing drop is still visible in high-motion or high-detail transitions.
+
+SIBR remains static per loaded point cloud state and does not natively replay deform_iter dynamic motion at runtime.
+
+Next step candidates:
+
+Tune free-camera interpolation and EMA aggressiveness per scene segment.
+
+Evaluate a lightweight post-process denoise for residual background flicker.
+
+If needed, design a viewer-side dynamic deformation integration path for true interactive 4D playback.

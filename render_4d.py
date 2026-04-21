@@ -15,7 +15,46 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 
 
-def render_video(dataset, iteration, pipeline):
+def _smooth_frames_mean(frames, radius):
+    if radius <= 0 or len(frames) <= 2:
+        return frames
+    smoothed = []
+    for i in range(len(frames)):
+        s = max(0, i - radius)
+        e = min(len(frames), i + radius + 1)
+        block = np.stack(frames[s:e], axis=0).astype(np.float32)
+        smoothed.append(np.mean(block, axis=0).astype(np.uint8))
+    return smoothed
+
+
+def _smooth_frames_ema(frames, alpha):
+    if len(frames) <= 1:
+        return frames
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    out = [frames[0].astype(np.float32)]
+    for i in range(1, len(frames)):
+        cur = frames[i].astype(np.float32)
+        out.append(alpha * out[-1] + (1.0 - alpha) * cur)
+    return [np.clip(x, 0, 255).astype(np.uint8) for x in out]
+
+
+def _post_smooth_frames(frames, mode, radius, ema_alpha, lock_camera):
+    mode = mode.lower()
+    if mode == "none":
+        return frames
+    if mode == "mean":
+        if not lock_camera:
+            print("[Warning] mean post-smoothing in free-camera mode may cause ghosting; switching to ema.")
+            return _smooth_frames_ema(frames, ema_alpha)
+        return _smooth_frames_mean(frames, radius)
+    if mode == "ema":
+        return _smooth_frames_ema(frames, ema_alpha)
+    return frames
+
+
+def render_video(dataset, iteration, pipeline, num_output_frames=300, lock_camera=False, smooth_radius=0,
+                 post_smooth_mode="none", ema_alpha=0.85, video_fps=30,
+                 deform_time_samples=1, deform_time_window=0.0, ease_camera=True):
     with torch.no_grad():
         # 1. 加载基础高斯模型
         gaussians = GaussianModel(dataset.sh_degree)
@@ -54,10 +93,16 @@ def render_video(dataset, iteration, pipeline):
             return
         print(f"正在渲染 {len(views)} 帧动态画面...")
 
-        num_output_frames = 300  # 目标总帧数
-        t_targets = np.linspace(0.0, 1.0, num_output_frames)
+        t_min = float(views[0].timestamp)
+        t_max = float(views[-1].timestamp)
 
-        print(f"正在进行平滑轨迹插值渲染，目标帧数: {num_output_frames}")
+        num_output_frames = int(max(2, num_output_frames))  # 目标总帧数
+        t_targets = np.linspace(t_min, t_max, num_output_frames)
+
+        print(
+            f"正在进行平滑轨迹插值渲染，目标帧数: {num_output_frames}, "
+            f"t范围: [{t_min:.6f}, {t_max:.6f}], fps: {video_fps}"
+        )
 
         frames = []
         # 注意：这里直接循环时间戳，不再嵌套 views 循环
@@ -76,12 +121,22 @@ def render_video(dataset, iteration, pipeline):
             # 2. 计算插值权重
             duration = view_b_orig.timestamp - view_a_orig.timestamp
             alpha = (t_cur - view_a_orig.timestamp) / duration if duration > 1e-7 else 0.0
+            alpha = float(np.clip(alpha, 0.0, 1.0))
+            if ease_camera:
+                # Smoothstep interpolation reduces perceived stutter at keyframe boundaries.
+                alpha = alpha * alpha * (3.0 - 2.0 * alpha)
 
-            # 3. 插值 R 和 T
-            T_interp = view_a_orig.T * (1 - alpha) + view_b_orig.T * alpha
-            key_rots = R.from_matrix([view_a_orig.R.T, view_b_orig.R.T])
-            slerp = Slerp([0, 1], key_rots)
-            R_interp = slerp([alpha]).as_matrix()[0].T
+            # 3. 插值 R 和 T（或固定相机，仅让时间变化）
+            if lock_camera:
+                key_view = views[len(views) // 2]
+                T_interp = key_view.T
+                R_interp = key_view.R
+                view_a_orig = key_view
+            else:
+                T_interp = view_a_orig.T * (1 - alpha) + view_b_orig.T * alpha
+                key_rots = R.from_matrix([view_a_orig.R.T, view_b_orig.R.T])
+                slerp = Slerp([0, 1], key_rots)
+                R_interp = slerp([alpha]).as_matrix()[0].T
 
             # --- 【关键修复：手动重构临时相机对象】 ---
             from argparse import Namespace
@@ -116,8 +171,15 @@ def render_video(dataset, iteration, pipeline):
             curr_view.camera_center = torch.inverse(curr_view.world_view_transform)[3, :3]
 
             # 4. 计算 4D 形变
-            t_tensor = torch.full((1,), t_cur).cuda()
-            d_xyz = deform_model(gaussians.get_xyz, t_tensor)
+            if deform_time_samples > 1 and deform_time_window > 0.0:
+                offsets = np.linspace(-deform_time_window, deform_time_window, int(deform_time_samples))
+                d_xyz = torch.zeros_like(gaussians.get_xyz)
+                for off in offsets:
+                    t_sample = float(np.clip(t_cur + off, t_min, t_max))
+                    d_xyz += deform_model(gaussians.get_xyz, t_sample)
+                d_xyz = d_xyz / float(len(offsets))
+            else:
+                d_xyz = deform_model(gaussians.get_xyz, float(t_cur))
             means3D_deformed = gaussians.get_xyz + d_xyz
 
             # 5. 执行渲染 (使用 curr_view 而不是 view_a_orig)
@@ -134,11 +196,13 @@ def render_video(dataset, iteration, pipeline):
             if idx % 50 == 0:
                 torch.cuda.empty_cache()
 
+        frames = _post_smooth_frames(frames, post_smooth_mode, smooth_radius, ema_alpha, lock_camera)
+
         # 5. 合成视频
         height, width, _ = frames[0].shape
         video_writer = cv2.VideoWriter(
             os.path.join(dataset.model_path, "dynamic_result.mp4"),
-            cv2.VideoWriter_fourcc(*'mp4v'), 24, (width, height)
+            cv2.VideoWriter_fourcc(*'mp4v'), int(max(1, video_fps)), (width, height)
         )
         for frame in frames:
             video_writer.write(frame)
@@ -151,6 +215,28 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     pp = PipelineParams(parser)
     parser.add_argument("--iteration", default=30000, type=int)
+    parser.add_argument("--num_output_frames", default=300, type=int)
+    parser.add_argument("--lock_camera", action="store_true")
+    parser.add_argument("--smooth_radius", default=0, type=int)
+    parser.add_argument("--post_smooth_mode", default="none", choices=["none", "mean", "ema"], type=str)
+    parser.add_argument("--ema_alpha", default=0.85, type=float)
+    parser.add_argument("--video_fps", default=30, type=int)
+    parser.add_argument("--deform_time_samples", default=1, type=int)
+    parser.add_argument("--deform_time_window", default=0.0, type=float)
+    parser.add_argument("--disable_ease_camera", action="store_true")
     args = get_combined_args(parser)
 
-    render_video(lp.extract(args), args.iteration, pp.extract(args))
+    render_video(
+        lp.extract(args),
+        args.iteration,
+        pp.extract(args),
+        num_output_frames=args.num_output_frames,
+        lock_camera=args.lock_camera,
+        smooth_radius=args.smooth_radius,
+        post_smooth_mode=args.post_smooth_mode,
+        ema_alpha=args.ema_alpha,
+        video_fps=args.video_fps,
+        deform_time_samples=args.deform_time_samples,
+        deform_time_window=args.deform_time_window,
+        ease_camera=not args.disable_ease_camera,
+    )

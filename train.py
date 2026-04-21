@@ -172,16 +172,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             use_trained_exp=dataset.train_test_exp,
                             separate_sh=SPARSE_ADAM_AVAILABLE)
         image = render_pkg["render"]
+        image_for_bg = image
         viewspace_point_tensor = render_pkg["viewspace_points"]
         visibility_filter = render_pkg["visibility_filter"]
         radii = render_pkg["radii"]
 
+        alpha_mask = None
         if viewpoint_cam.alpha_mask is not None:
             alpha_mask = viewpoint_cam.alpha_mask.cuda()
             image *= alpha_mask
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+        if alpha_mask is not None:
+            bg_target = bg.view(3, 1, 1)
+            gt_image = gt_image * alpha_mask + bg_target * (1.0 - alpha_mask)
+
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
@@ -189,6 +195,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_value = ssim(image, gt_image)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+
+        if alpha_mask is not None and opt.bg_consistency_weight > 0.0:
+            bg_target = bg.view(3, 1, 1)
+            bg_loss = torch.abs(image_for_bg * (1.0 - alpha_mask) - bg_target * (1.0 - alpha_mask)).mean()
+            loss += opt.bg_consistency_weight * bg_loss
 
         # Depth regularization
         Ll1depth_pure = 0.0
