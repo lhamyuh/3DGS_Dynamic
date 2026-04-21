@@ -78,7 +78,8 @@ class OptimizationParams(ParamGroup):
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
-        self.deformation_lr_init = 0.001 # --- [新增：形变场初始学习率参数] ---
+        self.deformation_lr_init = 0.0001
+        self.deformation_lr_gamma = 0.9999
         self.feature_lr = 0.0025
         self.opacity_lr = 0.025
         self.scaling_lr = 0.005
@@ -94,8 +95,12 @@ class OptimizationParams(ParamGroup):
         self.densify_from_iter = 500
         self.densify_until_iter = 20_000
         self.densify_grad_threshold = 0.00003
+        self.prune_opacity_threshold = 0.005
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
+        self.temporal_smoothness_weight = 0.0
+        self.temporal_smoothness_start_iter = 3000
+        self.temporal_smoothness_epsilon = 0.01
         self.random_background = False
         self.optimizer_type = "default"
         super().__init__(parser, "Optimization Parameters")
