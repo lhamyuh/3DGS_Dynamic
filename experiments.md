@@ -153,3 +153,48 @@ Free camera (slower motion, reduced ghosting):
 --ema_alpha 0.8
 
 Observation: subject clarity improves and ghosting is reduced; motion feels slower, but residual ghosting still makes the motion appear faster than desired.
+
+
+V9.1 Render Tuning Update (2026-04-29)
+
+Free camera (current best, clarity-first):
+
+--num_output_frames 840
+
+--video_fps 24
+
+--camera_time_samples 1
+
+--camera_time_window 0.0
+
+--camera_time_sigma 0.0
+
+--deform_time_samples 1
+
+--deform_time_window 0.0
+
+--deform_time_sigma 0.0
+
+--post_smooth_mode none
+
+Observation: camera motion is smooth, subject is sharp, ghosting is nearly gone; slight background noise remains.
+
+Fixed camera (current best, slight blur/noise):
+
+--num_output_frames 420
+
+--video_fps 30
+
+--lock_camera
+
+--deform_time_samples 3
+
+--deform_time_window 0.002
+
+--deform_time_sigma 0.001
+
+--post_smooth_mode ema
+
+--ema_alpha 0.92
+
+Observation: jitter is reduced, but fine detail is slightly blurred and faint noise remains.
