@@ -187,14 +187,14 @@ Fixed camera (current best, slight blur/noise):
 
 --lock_camera
 
---deform_time_samples 3
+--deform_time_samples 2
 
---deform_time_window 0.002
+--deform_time_window 0.001
 
---deform_time_sigma 0.001
+--deform_time_sigma 0.005
 
 --post_smooth_mode ema
 
---ema_alpha 0.92
+--ema_alpha 0.7
 
 Observation: jitter is reduced, but fine detail is slightly blurred and faint noise remains.
