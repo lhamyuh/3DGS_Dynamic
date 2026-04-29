@@ -112,3 +112,44 @@ Tune free-camera interpolation and EMA aggressiveness per scene segment.
 Evaluate a lightweight post-process denoise for residual background flicker.
 
 If needed, design a viewer-side dynamic deformation integration path for true interactive 4D playback.
+
+
+V9.1 Render Tuning (2026-04-29)
+
+Fixed camera (clarity-first):
+
+--lock_camera
+
+--deform_time_samples 1
+
+--deform_time_window 0.0
+
+--deform_time_sigma 0.0
+
+--post_smooth_mode none
+
+Observation: details are slightly clearer, but frequent micro-jitter remains.
+
+Free camera (slower motion, reduced ghosting):
+
+--num_output_frames 720
+
+--video_fps 24
+
+--camera_time_samples 1
+
+--camera_time_window 0.0
+
+--camera_time_sigma 0.0
+
+--deform_time_samples 3
+
+--deform_time_window 0.003
+
+--deform_time_sigma 0.0015
+
+--post_smooth_mode ema
+
+--ema_alpha 0.8
+
+Observation: subject clarity improves and ghosting is reduced; motion feels slower, but residual ghosting still makes the motion appear faster than desired.
