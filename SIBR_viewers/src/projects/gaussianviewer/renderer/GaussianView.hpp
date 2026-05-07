@@ -21,6 +21,8 @@
 # include <core/renderer/PointBasedRenderer.hpp>
 # include <memory>
 # include <core/graphics/Texture.hpp>
+# include <chrono>
+# include <vector>
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 #include <functional>
@@ -52,7 +54,9 @@ namespace sibr {
 		 * \param render_w rendering width
 		 * \param render_h rendering height
 		 */
-		GaussianView(const sibr::BasicIBRScene::Ptr& ibrScene, uint render_w, uint render_h, const char* file, bool* message_read, int sh_degree, bool white_bg = false, bool useInterop = true, int device = 0);
+		GaussianView(const sibr::BasicIBRScene::Ptr& ibrScene, uint render_w, uint render_h, const char* file, bool* message_read, int sh_degree, bool white_bg = false, bool useInterop = true, int device = 0,
+			const std::string& sequence_dir = std::string(), float sequence_fps = 30.0f, bool sequence_loop = false,
+			int sequence_start = 0, int sequence_end = -1, bool sequence_pause = false);
 
 		/** Replace the current scene.
 		 *\param newScene the new scene to render */
@@ -122,6 +126,20 @@ namespace sibr {
 		std::vector<char> fallback_bytes;
 		float* fallbackBufferCuda = nullptr;
 		bool accepted = false;
+
+		bool _sequenceEnabled = false;
+		bool _sequenceLoop = false;
+		bool _sequencePaused = false;
+		float _sequenceFps = 30.0f;
+		int _sequenceStart = 0;
+		int _sequenceEnd = -1;
+		int _sequenceIndex = 0;
+		int _gpuCount = 0;
+		std::chrono::steady_clock::time_point _lastFrameTime;
+		std::vector<std::string> _sequenceFiles;
+
+		bool loadFramePly(const std::string& filename);
+		void resetSequenceTiming();
 
 
 		std::shared_ptr<sibr::BasicIBRScene> _scene; ///< The current scene.

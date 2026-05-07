@@ -198,3 +198,32 @@ Fixed camera (current best, slight blur/noise):
 --ema_alpha 0.7
 
 Observation: jitter is reduced, but fine detail is slightly blurred and faint noise remains.
+
+
+SIBR Viewer Modification Updated Log (2026-05-07)
+
+Changes (P0 offline sequence playback):
+
+- SIBR_viewers/src/projects/gaussianviewer/renderer/Config.hpp
+	Added sequence playback CLI args: sequence_dir, sequence_fps, sequence_start, sequence_end, sequence_loop, sequence_pause.
+
+- SIBR_viewers/src/projects/gaussianviewer/apps/gaussianViewer/main.cpp
+	If sequence_dir is provided, pick the first .ply in the directory as the initial frame and pass sequence args to GaussianView.
+
+- SIBR_viewers/src/projects/gaussianviewer/renderer/GaussianView.hpp/.cpp
+	Added sequence state, file list, frame loading, fps timing, and GUI controls (pause/loop/fps/frame slider).
+	Reuses GPU buffers when possible; reallocates if point count changes.
+
+Purpose:
+
+Enable dynamic point cloud playback from an offline PLY sequence without running the deformation network in the viewer.
+
+Dynamic viewer launch (V9.1 PLY sequence):
+
+\.\SIBR_gaussianViewer_app.exe -m E:\3dgsData\output\Standup_V9_1_SmoothDyn -s E:\3dgsData\output\Standup_V9_1_SmoothDyn --iteration 30000 --sequence_dir E:\3dgsData\output\Standup_V9_1_SmoothDyn\ply_sequence --sequence_fps 24 --sequence_loop
+
+Optional params: --sequence_start 0 --sequence_end -1 --sequence_pause
+
+Current viewing notes:
+
+Static camera still shows slight blur and jitter; both static and free views show noticeable background noise.

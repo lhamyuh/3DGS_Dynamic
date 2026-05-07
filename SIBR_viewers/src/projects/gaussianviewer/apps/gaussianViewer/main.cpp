@@ -56,6 +56,26 @@ std::string findLargestNumberedSubdirectory(const std::string& directoryPath) {
 	return largestSubdirectory;
 }
 
+std::string findFirstPlyFile(const std::string& directoryPath) {
+	if (directoryPath.empty())
+		return "";
+	fs::path dirPath(directoryPath);
+	if (!fs::exists(dirPath) || !fs::is_directory(dirPath)) {
+		std::cerr << "Invalid directory: " << directoryPath << std::endl;
+		return "";
+	}
+	std::vector<std::string> plyFiles;
+	for (const auto& entry : fs::directory_iterator(dirPath)) {
+		if (fs::is_regular_file(entry) && entry.path().extension() == ".ply") {
+			plyFiles.push_back(entry.path().string());
+		}
+	}
+	if (plyFiles.empty())
+		return "";
+	std::sort(plyFiles.begin(), plyFiles.end());
+	return plyFiles.front();
+}
+
 
 #define PROGRAM_NAME "sibr_3Dgaussian"
 using namespace sibr;
@@ -185,6 +205,16 @@ int main(int ac, char** av)
 		plyfile += "/iteration_" + myArgs.iteration.get() + "/point_cloud.ply";
 	}
 
+	std::string sequence_dir = myArgs.sequenceDir.get();
+	if (!sequence_dir.empty())
+	{
+		const std::string firstPly = findFirstPlyFile(sequence_dir);
+		if (!firstPly.empty())
+			plyfile = firstPly;
+		else
+			SIBR_LOG << "No .ply files found in sequence_dir: " << sequence_dir << std::endl;
+	}
+
 	// Setup the scene: load the proxy, create the texture arrays.
 	const uint flags = SIBR_GPU_LINEAR_SAMPLING | SIBR_FLIP_TEXTURE;
 
@@ -212,7 +242,23 @@ int main(int ac, char** av)
 	const unsigned int sceneResHeight = usedResolution.y();
 
 	// Create the ULR view.
-	GaussianView::Ptr	gaussianView(new GaussianView(scene, sceneResWidth, sceneResHeight, plyfile.c_str(), &messageRead, sh_degree, white_background, !myArgs.noInterop, device));
+	GaussianView::Ptr	gaussianView(new GaussianView(
+		scene,
+		sceneResWidth,
+		sceneResHeight,
+		plyfile.c_str(),
+		&messageRead,
+		sh_degree,
+		white_background,
+		!myArgs.noInterop,
+		device,
+		sequence_dir,
+		myArgs.sequenceFps.get(),
+		myArgs.sequenceLoop.get(),
+		myArgs.sequenceStart.get(),
+		myArgs.sequenceEnd.get(),
+		myArgs.sequencePause.get()
+	));
 
 	// Raycaster.
 	std::shared_ptr<sibr::Raycaster> raycaster = std::make_shared<sibr::Raycaster>();

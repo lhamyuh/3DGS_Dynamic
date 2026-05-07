@@ -1,5 +1,6 @@
-#extlibs/
-#build/
+extlibs/
+build/
+build_vs2019/
 #install/
 #src/projects/*
 cmake-gui.exe.stackdump

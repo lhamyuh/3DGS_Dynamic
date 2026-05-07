@@ -46,6 +46,12 @@ namespace sibr {
 		RequiredArg<std::string> modelPathShort = { "m", "Model directory" };
 		RequiredArg<std::string> iteration = { "iteration", "Iteration to load from model" };
 		RequiredArg<std::string> pathShort = {"s", "path to the dataset root"};
+		Arg<std::string> sequenceDir = { "sequence_dir", "", "Directory of PLY frame sequence (optional)" };
+		Arg<float> sequenceFps = { "sequence_fps", 30.0f, "Playback fps for sequence_dir" };
+		Arg<int> sequenceStart = { "sequence_start", 0, "Start frame index in sequence" };
+		Arg<int> sequenceEnd = { "sequence_end", -1, "End frame index in sequence (-1 for last)" };
+		Arg<bool> sequenceLoop = { "sequence_loop", "Loop sequence playback" };
+		Arg<bool> sequencePause = { "sequence_pause", "Start sequence paused" };
 		Arg<int> device = {"device", 0, "CUDA device index"};
 		Arg<bool> loadImages = { "load_images", "Whether or not to load images for scene overview."};
 		Arg<bool> noInterop = { "no_interop", "Don't try to use interop (may be required for unconventional OpenGL setups, like WSL)" };

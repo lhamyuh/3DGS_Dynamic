@@ -12,6 +12,8 @@
 #include <projects/gaussianviewer/renderer/GaussianView.hpp>
 #include <core/graphics/GUI.hpp>
 #include <thread>
+#include <algorithm>
+#include <boost/filesystem.hpp>
 #include <boost/asio.hpp>
 #include <rasterizer.h>
 #include <imgui_internal.h>
@@ -51,6 +53,25 @@ float sigmoid(const float m1)
 float inverse_sigmoid(const float m1)
 {
 	return log(m1 / (1.0f - m1));
+}
+
+namespace {
+	std::vector<std::string> listPlyFiles(const std::string& directory)
+	{
+		std::vector<std::string> files;
+		boost::filesystem::path dirPath(directory);
+		if (!boost::filesystem::exists(dirPath) || !boost::filesystem::is_directory(dirPath))
+			return files;
+		for (const auto& entry : boost::filesystem::directory_iterator(dirPath))
+		{
+			if (!boost::filesystem::is_regular_file(entry))
+				continue;
+			if (entry.path().extension() == ".ply")
+				files.push_back(entry.path().string());
+		}
+		std::sort(files.begin(), files.end());
+		return files;
+	}
 }
 
 # define CUDA_SAFE_CALL_ALWAYS(A) \
@@ -315,7 +336,8 @@ std::function<char* (size_t N)> resizeFunctional(void** ptr, size_t& S) {
 	return lambda;
 }
 
-sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint render_w, uint render_h, const char* file, bool* messageRead, int sh_degree, bool white_bg, bool useInterop, int device) :
+sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint render_w, uint render_h, const char* file, bool* messageRead, int sh_degree, bool white_bg, bool useInterop, int device,
+	const std::string& sequence_dir, float sequence_fps, bool sequence_loop, int sequence_start, int sequence_end, bool sequence_pause) :
 	_scene(ibrScene),
 	_dontshow(messageRead),
 	_sh_degree(sh_degree),
@@ -436,6 +458,27 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	geomBufferFunc = resizeFunctional(&geomPtr, allocdGeom);
 	binningBufferFunc = resizeFunctional(&binningPtr, allocdBinning);
 	imgBufferFunc = resizeFunctional(&imgPtr, allocdImg);
+
+	_gpuCount = count;
+	if (!sequence_dir.empty())
+	{
+		_sequenceFiles = listPlyFiles(sequence_dir);
+		if (!_sequenceFiles.empty())
+		{
+			_sequenceEnabled = true;
+			_sequenceFps = (sequence_fps > 0.0f) ? sequence_fps : 30.0f;
+			_sequenceLoop = sequence_loop;
+			_sequencePaused = sequence_pause;
+			_sequenceStart = std::max(0, sequence_start);
+			int lastIdx = int(_sequenceFiles.size()) - 1;
+			_sequenceEnd = (sequence_end < 0) ? lastIdx : std::min(sequence_end, lastIdx);
+			if (_sequenceEnd < _sequenceStart)
+				_sequenceStart = _sequenceEnd;
+			_sequenceIndex = std::min(_sequenceStart, _sequenceEnd);
+			loadFramePly(_sequenceFiles[_sequenceIndex]);
+			resetSequenceTiming();
+		}
+	}
 }
 
 void sibr::GaussianView::setScene(const sibr::BasicIBRScene::Ptr & newScene)
@@ -451,6 +494,79 @@ void sibr::GaussianView::setScene(const sibr::BasicIBRScene::Ptr & newScene)
 		}
 	}
 	_scene->cameras()->debugFlagCameraAsUsed(imgs_ulr);
+}
+
+bool sibr::GaussianView::loadFramePly(const std::string& filename)
+{
+	std::vector<Pos> pos;
+	std::vector<Rot> rot;
+	std::vector<Scale> scale;
+	std::vector<float> opacity;
+	std::vector<SHs<3>> shs;
+	int newCount = 0;
+	if (_sh_degree == 0)
+		newCount = loadPly<0>(filename.c_str(), pos, shs, opacity, scale, rot, _scenemin, _scenemax);
+	else if (_sh_degree == 1)
+		newCount = loadPly<1>(filename.c_str(), pos, shs, opacity, scale, rot, _scenemin, _scenemax);
+	else if (_sh_degree == 2)
+		newCount = loadPly<2>(filename.c_str(), pos, shs, opacity, scale, rot, _scenemin, _scenemax);
+	else
+		newCount = loadPly<3>(filename.c_str(), pos, shs, opacity, scale, rot, _scenemin, _scenemax);
+
+	if (newCount <= 0)
+		return false;
+
+	count = newCount;
+	if (!_cropping)
+	{
+		_boxmin = _scenemin;
+		_boxmax = _scenemax;
+	}
+
+	if (_gpuCount != count)
+	{
+		if (pos_cuda)
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda));
+		if (rot_cuda)
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda));
+		if (shs_cuda)
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda));
+		if (opacity_cuda)
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda));
+		if (scale_cuda)
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda));
+		if (rect_cuda)
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&pos_cuda, sizeof(Pos) * count));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&rot_cuda, sizeof(Rot) * count));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&shs_cuda, sizeof(SHs<3>) * count));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&opacity_cuda, sizeof(float) * count));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&scale_cuda, sizeof(Scale) * count));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&rect_cuda, 2 * count * sizeof(int)));
+		_gpuCount = count;
+	}
+
+	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(pos_cuda, pos.data(), sizeof(Pos) * count, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(rot_cuda, rot.data(), sizeof(Rot) * count, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(shs_cuda, shs.data(), sizeof(SHs<3>) * count, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(opacity_cuda, opacity.data(), sizeof(float) * count, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(scale_cuda, scale.data(), sizeof(Scale) * count, cudaMemcpyHostToDevice));
+
+	if (gData)
+		delete gData;
+	gData = new GaussianData(count,
+		(float*)pos.data(),
+		(float*)rot.data(),
+		(float*)scale.data(),
+		opacity.data(),
+		(float*)shs.data());
+
+	return true;
+}
+
+void sibr::GaussianView::resetSequenceTiming()
+{
+	_lastFrameTime = std::chrono::steady_clock::now();
 }
 
 void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Camera & eye)
@@ -549,6 +665,43 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 
 void sibr::GaussianView::onUpdate(Input & input)
 {
+	if (!_sequenceEnabled || _sequencePaused)
+		return;
+
+	const float fps = std::max(1.0f, _sequenceFps);
+	const double frameTime = 1.0 / double(fps);
+	const auto now = std::chrono::steady_clock::now();
+	const double dt = std::chrono::duration<double>(now - _lastFrameTime).count();
+	if (dt < frameTime)
+		return;
+
+	int steps = int(dt / frameTime);
+	_lastFrameTime = now;
+	bool advanced = false;
+	for (int i = 0; i < steps; ++i)
+	{
+		if (_sequenceIndex < _sequenceEnd)
+		{
+			_sequenceIndex++;
+			advanced = true;
+		}
+		else
+		{
+			if (_sequenceLoop)
+			{
+				_sequenceIndex = _sequenceStart;
+				advanced = true;
+			}
+			else
+			{
+				_sequencePaused = true;
+				break;
+			}
+		}
+	}
+
+	if (advanced && _sequenceIndex >= 0 && _sequenceIndex < int(_sequenceFiles.size()))
+		loadFramePly(_sequenceFiles[_sequenceIndex]);
 }
 
 void sibr::GaussianView::onGUI()
@@ -574,6 +727,25 @@ void sibr::GaussianView::onGUI()
 	}
 	ImGui::Checkbox("Fast culling", &_fastCulling);
 	ImGui::Checkbox("Antialiasing", &_antialiasing);
+
+	if (_sequenceEnabled)
+	{
+		ImGui::Separator();
+		ImGui::Text("Sequence");
+		ImGui::Checkbox("Pause", &_sequencePaused);
+		ImGui::Checkbox("Loop", &_sequenceLoop);
+		float fps = _sequenceFps;
+		if (ImGui::SliderFloat("Seq FPS", &fps, 1.0f, 120.0f))
+			_sequenceFps = fps;
+		int idx = _sequenceIndex;
+		if (ImGui::SliderInt("Frame", &idx, _sequenceStart, _sequenceEnd))
+		{
+			_sequenceIndex = idx;
+			loadFramePly(_sequenceFiles[_sequenceIndex]);
+			_sequencePaused = true;
+			resetSequenceTiming();
+		}
+	}
 
 	ImGui::Checkbox("Crop Box", &_cropping);
 	if (_cropping)
