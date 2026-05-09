@@ -227,3 +227,131 @@ Optional params: --sequence_start 0 --sequence_end -1 --sequence_pause
 Current viewing notes:
 
 Static camera still shows slight blur and jitter; both static and free views show noticeable background noise.
+
+
+V9.2 NoiseClean Best (2026-05-09)
+
+Dataset: standup
+
+Best config (Refine_Trial, 5k):
+
+--iterations 5000
+--deformation_lr_init 0.0002
+--deformation_lr_gamma 0.9999
+--densify_grad_threshold 0.00045
+--densify_from_iter 1000
+--densify_until_iter 10000
+--prune_opacity_threshold 0.035
+--opacity_reset_interval 1500
+--temporal_smoothness_weight 0.004
+--temporal_smoothness_start_iter 3000
+--bg_consistency_weight 0.04
+--bg_mask_weight 0.08
+--bg_mask_threshold 0.05
+--opacity_sparsity_weight 0.003
+--opacity_sparsity_start_iter 500
+--scale_reg_weight 0.0015
+--scale_reg_start_iter 1000
+--bbox_prune_scale 1.2
+--bbox_prune_interval 400
+--bbox_prune_start_iter 1500
+--visibility_prune_min_count 1
+--visibility_prune_interval 500
+--visibility_prune_start_iter 1500
+
+Metrics (train renders):
+
+SSIM: 0.786222
+PSNR: 19.612907
+BG mean: 0.022170
+BG max: 1.000000
+
+Notes:
+
+Best overall balance so far: lower background noise with higher SSIM/PSNR than stronger/strict trials.
+
+
+V9.2 NoiseClean Conclusion (2026-05-10)
+
+Status: Failed (noise cleanup regressed overall quality).
+
+Summary:
+
+- Subject details became blurred.
+- Frame jitter increased.
+- Halo around subject appeared.
+- Noise became smeared/patchy rather than sparse.
+
+Overall result is significantly worse than Standup_V9_1_SmoothDyn.
+
+Next step:
+
+Start a new optimization cycle from V9.3 baseline and re-evaluate noise strategy.
+
+
+V9.3 NoisePrune (2026-05-10)
+
+Status: Major improvement (noise greatly reduced, subject clarity preserved).
+
+Training command:
+
+/root/miniconda3/envs/4dgs_env/bin/python train.py
+-s /autodl-fs/data/dataset_dynamic/data/standup
+-m output/Standup_V9_3_NoisePrune
+--iterations 30000
+--deformation_lr_init 0.0002
+--deformation_lr_gamma 0.9999
+--densify_grad_threshold 0.00035
+--densify_from_iter 1000
+--densify_until_iter 12000
+--prune_opacity_threshold 0.03
+--opacity_reset_interval 1500
+--temporal_smoothness_weight 0.003
+--temporal_smoothness_start_iter 3000
+--alpha_mask_mode full
+--bg_consistency_weight 0.08
+--opacity_sparsity_weight 0.0025
+--opacity_sparsity_start_iter 500
+--scale_reg_weight 0.0015
+--scale_reg_start_iter 1000
+--bbox_prune_scale 1.1
+--bbox_prune_interval 400
+--bbox_prune_start_iter 1500
+--visibility_prune_min_count 3
+--visibility_prune_interval 200
+--visibility_prune_start_iter 800
+
+Render (fixed camera):
+
+/root/miniconda3/envs/4dgs_env/bin/python render_4d.py
+-s /autodl-fs/data/dataset_dynamic/data/standup
+-m output/Standup_V9_3_NoisePrune
+--iteration 30000
+--num_output_frames 420
+--video_fps 30
+--lock_camera
+--deform_time_samples 2
+--deform_time_window 0.001
+--deform_time_sigma 0.0005
+--post_smooth_mode ema
+--ema_alpha 0.7
+
+Render (free camera):
+
+/root/miniconda3/envs/4dgs_env/bin/python render_4d.py
+-s /autodl-fs/data/dataset_dynamic/data/standup
+-m output/Standup_V9_3_NoisePrune
+--iteration 30000
+--num_output_frames 840
+--video_fps 24
+--deform_time_samples 2
+--deform_time_window 0.001
+--deform_time_sigma 0.0005
+--post_smooth_mode ema
+--ema_alpha 0.7
+
+Progress note:
+
+Compared with V9.1, background noise is largely removed and the subject remains sharp with stable motion.
+
+Defects: Slight lens shake still exists, and details are slightly blurred.

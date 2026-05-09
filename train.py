@@ -180,7 +180,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         alpha_mask = None
         if viewpoint_cam.alpha_mask is not None:
             alpha_mask = viewpoint_cam.alpha_mask.cuda()
-            image *= alpha_mask
+            if opt.alpha_mask_mode == "ignore":
+                image *= alpha_mask
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -200,6 +201,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             bg_target = bg.view(3, 1, 1)
             bg_loss = torch.abs(image_for_bg * (1.0 - alpha_mask) - bg_target * (1.0 - alpha_mask)).mean()
             loss += opt.bg_consistency_weight * bg_loss
+
+        if alpha_mask is None and opt.bg_mask_weight > 0.0:
+            bg_target = bg.view(3, 1, 1)
+            bg_mask = (torch.abs(gt_image - bg_target).mean(0, keepdim=True) < opt.bg_mask_threshold).float()
+            if bg_mask.sum() > 0:
+                bg_loss = torch.abs(image_for_bg * bg_mask - bg_target * bg_mask).mean()
+                loss += opt.bg_mask_weight * bg_loss
+
+        if opt.opacity_sparsity_weight > 0.0 and iteration >= opt.opacity_sparsity_start_iter:
+            loss += opt.opacity_sparsity_weight * gaussians.get_opacity.mean()
+
+        if opt.scale_reg_weight > 0.0 and iteration >= opt.scale_reg_start_iter:
+            loss += opt.scale_reg_weight * gaussians.get_scaling.mean()
 
         # Depth regularization
         Ll1depth_pure = 0.0
@@ -271,6 +285,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+                if opt.visibility_prune_min_count > 0 and iteration >= opt.visibility_prune_start_iter:
+                    if iteration < opt.densify_until_iter and iteration % max(1, opt.visibility_prune_interval) == 0:
+                        prune_mask = gaussians.denom.squeeze() < float(opt.visibility_prune_min_count)
+                        if prune_mask.any():
+                            gaussians.prune_points(prune_mask)
+
+            if opt.bbox_prune_scale > 0.0 and iteration >= opt.bbox_prune_start_iter:
+                if iteration % max(1, opt.bbox_prune_interval) == 0:
+                    radius = scene.cameras_extent * opt.bbox_prune_scale
+                    prune_mask = torch.norm(gaussians.get_xyz, dim=1) > radius
+                    if prune_mask.any():
+                        gaussians.prune_points(prune_mask)
 
             # Optimizer step
             if iteration < opt.iterations:

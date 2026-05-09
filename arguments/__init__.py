@@ -101,7 +101,20 @@ class OptimizationParams(ParamGroup):
         self.temporal_smoothness_weight = 0.0
         self.temporal_smoothness_start_iter = 3000
         self.temporal_smoothness_epsilon = 0.01
+        self.alpha_mask_mode = "ignore"
         self.bg_consistency_weight = 0.0
+        self.bg_mask_weight = 0.0
+        self.bg_mask_threshold = 0.05
+        self.opacity_sparsity_weight = 0.0
+        self.opacity_sparsity_start_iter = 0
+        self.scale_reg_weight = 0.0
+        self.scale_reg_start_iter = 0
+        self.bbox_prune_scale = 0.0
+        self.bbox_prune_interval = 500
+        self.bbox_prune_start_iter = 1000
+        self.visibility_prune_min_count = 0
+        self.visibility_prune_interval = 500
+        self.visibility_prune_start_iter = 1000
         self.random_background = False
         self.optimizer_type = "default"
         super().__init__(parser, "Optimization Parameters")

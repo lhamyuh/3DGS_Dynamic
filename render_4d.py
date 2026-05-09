@@ -48,6 +48,25 @@ def _gaussian_weights(offsets, sigma):
     return weights / weights_sum
 
 
+def _build_bg_mask(gt_bgr, bg_bgr, threshold, erode_iters):
+    thresh_px = float(max(threshold, 0.0)) * 255.0
+    diff = np.mean(np.abs(gt_bgr.astype(np.float32) - bg_bgr[None, None, :]), axis=2)
+    mask = (diff <= thresh_px).astype(np.uint8)
+    if erode_iters > 0:
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=int(erode_iters))
+    return mask
+
+
+def _build_bg_mask_alpha(alpha, threshold, erode_iters):
+    thresh = float(np.clip(threshold, 0.0, 1.0))
+    mask = (alpha < thresh).astype(np.uint8)
+    if erode_iters > 0:
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=int(erode_iters))
+    return mask
+
+
 def _find_bracketing_views(views, t_value):
     view_a, view_b = None, None
     for i in range(len(views) - 1):
@@ -94,7 +113,10 @@ def render_video(dataset, iteration, pipeline, num_output_frames=300, lock_camer
                  deform_time_sigma=0.0,
                  camera_time_samples=1, camera_time_window=0.0,
                  camera_time_sigma=0.0,
-                 ease_camera=True):
+                 ease_camera=True,
+                 bg_cleanup=False, bg_cleanup_threshold=0.05,
+                 bg_cleanup_erode=1, bg_cleanup_blend=1.0,
+                 bg_cleanup_use_alpha=True, bg_cleanup_alpha_threshold=0.5):
     with torch.no_grad():
         # 1. 加载基础高斯模型
         gaussians = GaussianModel(dataset.sh_degree)
@@ -114,6 +136,7 @@ def render_video(dataset, iteration, pipeline, num_output_frames=300, lock_camer
 
         bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        bg_color_bgr = (np.array(bg_color[::-1], dtype=np.float32) * 255.0)
 
         # 3. 创建输出目录
         output_path = os.path.join(dataset.model_path, "render_4d_video")
@@ -277,6 +300,25 @@ def render_video(dataset, iteration, pipeline, num_output_frames=300, lock_camer
                     weight_view = c_weights.astype(np.float32)[:, None, None, None]
                     out_frame = np.sum(subframe_stack * weight_view, axis=0).astype(np.uint8)
 
+            if bg_cleanup:
+                gt_view = view_a_orig if alpha <= 0.5 else view_b_orig
+                if hasattr(gt_view, "original_image"):
+                    use_alpha = bool(bg_cleanup_use_alpha) and gt_view.original_image.shape[0] >= 4
+                    if use_alpha:
+                        alpha_map = gt_view.original_image[3].detach().cpu().numpy()
+                        mask = _build_bg_mask_alpha(alpha_map, bg_cleanup_alpha_threshold, bg_cleanup_erode)
+                    else:
+                        gt_img = gt_view.original_image[:3].permute(1, 2, 0).detach().cpu().numpy()
+                        gt_bgr = cv2.cvtColor(np.clip(gt_img * 255.0, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+                        mask = _build_bg_mask(gt_bgr, bg_color_bgr, bg_cleanup_threshold, bg_cleanup_erode)
+                    if np.any(mask):
+                        blend = float(np.clip(bg_cleanup_blend, 0.0, 1.0))
+                        if blend >= 1.0:
+                            out_frame[mask == 1] = bg_color_bgr
+                        else:
+                            mask_f = (mask[:, :, None].astype(np.float32) * blend)
+                            out_frame = (out_frame.astype(np.float32) * (1.0 - mask_f) + bg_color_bgr[None, None, :] * mask_f).astype(np.uint8)
+
             frames.append(out_frame)
             cv2.imwrite(os.path.join(output_path, f"{idx:05d}.png"), out_frame)
 
@@ -316,6 +358,12 @@ if __name__ == "__main__":
     parser.add_argument("--camera_time_window", default=0.0, type=float)
     parser.add_argument("--camera_time_sigma", default=0.0, type=float)
     parser.add_argument("--disable_ease_camera", action="store_true")
+    parser.add_argument("--bg_cleanup", action="store_true")
+    parser.add_argument("--bg_cleanup_threshold", default=0.05, type=float)
+    parser.add_argument("--bg_cleanup_erode", default=1, type=int)
+    parser.add_argument("--bg_cleanup_blend", default=1.0, type=float)
+    parser.add_argument("--bg_cleanup_use_alpha", action="store_true")
+    parser.add_argument("--bg_cleanup_alpha_threshold", default=0.5, type=float)
     args = get_combined_args(parser)
 
     render_video(
@@ -335,4 +383,10 @@ if __name__ == "__main__":
         camera_time_window=args.camera_time_window,
         camera_time_sigma=args.camera_time_sigma,
         ease_camera=not args.disable_ease_camera,
+        bg_cleanup=args.bg_cleanup,
+        bg_cleanup_threshold=args.bg_cleanup_threshold,
+        bg_cleanup_erode=args.bg_cleanup_erode,
+        bg_cleanup_blend=args.bg_cleanup_blend,
+        bg_cleanup_use_alpha=args.bg_cleanup_use_alpha,
+        bg_cleanup_alpha_threshold=args.bg_cleanup_alpha_threshold,
     )
