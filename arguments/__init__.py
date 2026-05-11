@@ -101,6 +101,7 @@ class OptimizationParams(ParamGroup):
         self.temporal_smoothness_weight = 0.0
         self.temporal_smoothness_start_iter = 3000
         self.temporal_smoothness_epsilon = 0.01
+        self.temporal_smoothness_samples = 1
         self.alpha_mask_mode = "ignore"
         self.bg_consistency_weight = 0.0
         self.bg_mask_weight = 0.0

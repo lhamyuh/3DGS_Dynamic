@@ -234,11 +234,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             eps = abs(opt.temporal_smoothness_epsilon)
             if eps > 0 and time_max > time_min:
                 cur_time_f = float(cur_time)
-                t_neighbor = min(time_max, cur_time_f + eps)
-                if t_neighbor == cur_time_f:
-                    t_neighbor = max(time_min, cur_time_f - eps)
-                d_xyz_neighbor = deform_model(gaussians.get_xyz, t_neighbor)
-                loss_tv = torch.nn.functional.smooth_l1_loss(d_xyz_neighbor, d_xyz)
+                num_samples = max(1, int(opt.temporal_smoothness_samples))
+                if num_samples <= 1:
+                    t_neighbor = min(time_max, cur_time_f + eps)
+                    if t_neighbor == cur_time_f:
+                        t_neighbor = max(time_min, cur_time_f - eps)
+                    d_xyz_neighbor = deform_model(gaussians.get_xyz, t_neighbor)
+                    loss_tv = torch.nn.functional.smooth_l1_loss(d_xyz_neighbor, d_xyz)
+                else:
+                    offsets = torch.linspace(-eps, eps, steps=num_samples + 2, device="cuda")[1:-1]
+                    offsets = offsets[offsets.abs() > 1e-8]
+                    loss_tv = 0.0
+                    count = 0
+                    for off in offsets:
+                        t_neighbor = float(cur_time_f + off.item())
+                        t_neighbor = min(time_max, max(time_min, t_neighbor))
+                        d_xyz_neighbor = deform_model(gaussians.get_xyz, t_neighbor)
+                        loss_tv += torch.nn.functional.smooth_l1_loss(d_xyz_neighbor, d_xyz)
+                        count += 1
+                    if count > 0:
+                        loss_tv = loss_tv / float(count)
                 loss += opt.temporal_smoothness_weight * loss_tv
 
         loss.backward()
