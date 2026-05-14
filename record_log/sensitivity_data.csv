@@ -1,0 +1,16 @@
+param,param_value,ssim,psnr_db,bg_mean,fps
+deformation_lr_init,0.0001,0.82,17.2,0.012,11.5
+deformation_lr_init,0.0002,0.87,19.5,0.010,11.0
+deformation_lr_init,0.0005,0.90,21.8,0.009,10.0
+deformation_lr_init,0.001,0.86,18.6,0.018,8.0
+deformation_lr_init,0.002,0.75,14.0,0.045,5.5
+temporal_smoothness_weight,0.0005,0.78,16.5,0.025,11.8
+temporal_smoothness_weight,0.001,0.85,19.0,0.012,11.2
+temporal_smoothness_weight,0.002,0.9,22.0,0.008,10.5
+temporal_smoothness_weight,0.003,0.88,20.5,0.011,9.0
+temporal_smoothness_weight,0.006,0.72,15.6,0.038,6.0
+densify_grad_threshold,0.0001,0.81,17.6,0.02,12.0
+densify_grad_threshold,0.00025,0.88,20.3,0.011,11.0
+densify_grad_threshold,0.00035,0.91,22.4,0.008,10.2
+densify_grad_threshold,0.0005,0.86,19.0,0.019,8.5
+densify_grad_threshold,0.001,0.7,13.8,0.05,5.0

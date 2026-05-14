@@ -379,13 +379,25 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
-                    psnr_test += psnr(image, gt_image).mean().double()
+                    psnr_val = psnr(image, gt_image).mean().double()
+                    psnr_test += psnr_val
+                    # DEBUG: 第一个视角时打印诊断信息
+                    if idx == 0 and iteration == testing_iterations[0]:
+                        mse_debug = (((image - gt_image)) ** 2).mean().item()
+                        print(f"[DEBUG] image range: [{image.min():.4f}, {image.max():.4f}]")
+                        print(f"[DEBUG] gt_image range: [{gt_image.min():.4f}, {gt_image.max():.4f}]")
+                        print(f"[DEBUG] MSE: {mse_debug:.6f}, PSNR (dB): {psnr_val:.4f}")
+                        print(f"[DEBUG] image shape: {image.shape}, gt_image shape: {gt_image.shape}")
+                        print(f"[DEBUG] image dtype: {image.dtype}, gt_image dtype: {gt_image.dtype}")
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    # 显式记录标准单位的指标：PSNR(dB) 和 L1-Loss
+                    tb_writer.add_scalar(config['name'] + '/PSNR_dB', psnr_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/Reconstruction_Loss_L1', l1_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
@@ -402,7 +414,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 3_000, 5_000, 7_000, 10_000, 15_000, 20_000, 25_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--disable_viewer', action='store_true', default=False)

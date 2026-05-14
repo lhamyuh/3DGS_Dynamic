@@ -100,3 +100,25 @@ Outcome summary
 Open issues
 - Slight lens shake remains in some sequences.
 - Very mild blur in high-motion frames (can be tuned by render settings).
+
+
+StandUp_V9_3_NoisePrune_White
+PSNR Value recording
+Suggested tensorboard checkpoints
+- 1k
+- 3k
+- 5k
+- 7k
+- 10k
+- 15k
+- 20k
+- 25k
+- 30k
+
+PSNR Value recording
+7k:21.98
+30k:21.95
+
+SSIM
+
+BG_Mean
